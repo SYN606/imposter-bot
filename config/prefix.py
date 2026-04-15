@@ -3,10 +3,10 @@ import discord
 import os
 
 # env already loaded in main
-PREFIX = (os.getenv("PREFIX") or "dv").strip()
+PREFIX = (os.getenv("PREFIX") or "sus").strip()
 
 if not PREFIX:
-    PREFIX = "dv"
+    PREFIX = "sus"
 
 
 # ========================
