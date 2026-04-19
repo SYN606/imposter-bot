@@ -235,6 +235,7 @@ name = "imposter"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "aiohttp" },
     { name = "aiosqlite" },
     { name = "discord" },
     { name = "python-dotenv" },
@@ -243,6 +244,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aiohttp", specifier = ">=3.13.3" },
     { name = "aiosqlite", specifier = ">=0.22.1" },
     { name = "discord", specifier = ">=2.3.2" },
     { name = "python-dotenv", specifier = ">=1.2.2" },

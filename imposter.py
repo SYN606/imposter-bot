@@ -2,11 +2,15 @@ import os
 import time
 import logging
 import traceback
+import threading
+import sys
 import discord
 from discord.ext import commands
 
 
-# safe settings load
+# ========================
+# SAFE SETTINGS LOAD
+# ========================
 try:
     from config import settings
 
@@ -23,12 +27,12 @@ except Exception as e:
     exit(1)
 
 from config.prefix import dynamic_prefix, normalize_prefix
-
-# 🔥 DB IMPORT
 from database.init import init_db
 
 
-# logging
+# ========================
+# LOGGING
+# ========================
 logging.basicConfig(
     level=logging.INFO,
     format="%(message)s",
@@ -45,13 +49,44 @@ def error(msg):
     logger.error(msg)
 
 
-# intents
+# ========================
+# INTENTS
+# ========================
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 
 
-# bot
+# ========================
+# CONTROL FLAGS
+# ========================
+RELOAD_FLAG = False
+STOP_FLAG = False
+
+
+def keyboard_listener():
+    global RELOAD_FLAG, STOP_FLAG
+
+    while True:
+        try:
+            key = sys.stdin.read(1)
+
+            if key.lower() == "r":
+                print("\n[RELOAD REQUESTED]\n")
+                RELOAD_FLAG = True
+
+            elif key.lower() == "c":
+                print("\n[STOP REQUESTED]\n")
+                STOP_FLAG = True
+                break
+
+        except Exception:
+            break
+
+
+# ========================
+# BOT
+# ========================
 class ImposterBot(commands.Bot):
     def __init__(self):
         super().__init__(
@@ -61,9 +96,6 @@ class ImposterBot(commands.Bot):
         )
 
     async def setup_hook(self):
-        # ========================
-        # DATABASE INIT
-        # ========================
         try:
             await init_db()
             log("✓ Database initialized")
@@ -73,14 +105,8 @@ class ImposterBot(commands.Bot):
             if is_dev():
                 traceback.print_exc()
 
-        # ========================
-        # LOAD COMMANDS
-        # ========================
         await self.load_extensions()
 
-        # ========================
-        # SYNC SLASH
-        # ========================
         if SYNC_COMMANDS:
             try:
                 await self.tree.sync()
@@ -99,8 +125,7 @@ class ImposterBot(commands.Bot):
                 if not file.endswith(".py") or file.startswith("__"):
                     continue
 
-                full_path = os.path.join(root, file)
-                module = full_path.replace(os.sep, ".").replace("/", ".")[:-3]
+                module = os.path.join(root, file).replace(os.sep, ".")[:-3]
 
                 try:
                     await self.load_extension(module)
@@ -130,9 +155,19 @@ class ImposterBot(commands.Bot):
         await self.process_commands(message)
 
 
-# entrypoint
+# ========================
+# ENTRYPOINT
+# ========================
 def main():
+    global RELOAD_FLAG, STOP_FLAG
+
+    # start keyboard listener thread
+    threading.Thread(target=keyboard_listener, daemon=True).start()
+
     while True:
+        RELOAD_FLAG = False
+        STOP_FLAG = False
+
         bot = ImposterBot()
 
         try:
@@ -146,17 +181,8 @@ def main():
             print("- SERVER MEMBERS INTENT\n")
             break
 
-        except discord.HTTPException as e:
-            if e.status == 429:
-                log("Rate limited → retrying in 60s\n")
-                time.sleep(60)
-                continue
-
-            error(f"HTTP error → {e.status}")
-            break
-
         except KeyboardInterrupt:
-            print("\nStopped.\n")
+            print("\nGraceful shutdown...\n")
             break
 
         except Exception as e:
@@ -165,7 +191,18 @@ def main():
             if is_dev():
                 traceback.print_exc()
 
-            time.sleep(30)
+            time.sleep(5)
+
+        # ========================
+        # HANDLE FLAGS
+        # ========================
+        if STOP_FLAG:
+            log("Stopped.")
+            break
+
+        if RELOAD_FLAG:
+            log("Reloading bot...\n")
+            continue
 
 
 if __name__ == "__main__":

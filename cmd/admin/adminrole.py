@@ -11,9 +11,11 @@ class AdminRole(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    # ========================
-    # CORE LOGIC
-    # ========================
+    # HELPERS
+    def is_owner(self, user, guild):
+        return guild and user.id == guild.owner_id
+
+    # CORE
     async def run(self,
                   target,
                   action: str,
@@ -28,25 +30,42 @@ class AdminRole(commands.Cog):
         if not guild:
             return await r.error("Error", "Guild not found")
 
+        action = action.lower()
+
+        # SET
         if action == "set":
-            if role is None:
-                return await r.error("Missing Role", "Provide a role to set")
+            if not role:
+                return await r.error("Missing Role", "Provide a role")
 
-            await GuildCRUD.set_admin_role(guild.id, role.name)
-            return await r.success("Admin Role Set", f"Role → `{role.name}`")
+            await GuildCRUD.set_admin_role(guild.id, role)
 
+            return await r.success("Admin Role Set", f"Role → {role.mention}")
+
+        # UNSET
         elif action == "unset":
-            await GuildCRUD.set_admin_role(guild.id, "Admin")
-            return await r.success("Admin Role Reset", "Defaulted to `Admin`")
+            await GuildCRUD.unset_admin_role(guild.id) # type: ignore
 
+            return await r.success("Admin Role Removed",
+                                   "No admin role configured")
+
+        # LIST
         elif action == "list":
-            role_name = await GuildCRUD.get_admin_role(guild.id)
-            return await r.info("Admin Role", f"Current → `{role_name}`")
+            role_id = await GuildCRUD.get_admin_role_id(guild.id) # type: ignore
 
+            role_obj = guild.get_role(int(role_id)) if role_id else None
+
+            if not role_obj:
+                return await r.info("Admin Role", "No admin role set")
+
+            return await r.info("Admin Role", f"Current → {role_obj.mention}")
+
+        # ========================
+        # INVALID
+        # ========================
         return await r.error("Invalid Action", "Use: set | unset | list")
 
     # ========================
-    # PREFIX COMMAND
+    # PREFIX
     # ========================
     @commands.command(name="adminrole")
     async def adminrole_prefix(
@@ -57,25 +76,24 @@ class AdminRole(commands.Cog):
     ):
         r = Respond(ctx=ctx)
 
-        if ctx.guild is None:
+        if not ctx.guild:
             return
 
-        if ctx.guild.owner_id != ctx.author.id:
-            return await r.error("Access Denied",
-                                 "Only server owner can use this command")
+        if not self.is_owner(ctx.author, ctx.guild):
+            return await r.error("Access Denied", "Owner only command")
 
         if not action:
             return await r.info("Usage", "adminrole <set|unset|list> [role]")
 
-        await self.run({"ctx": ctx}, action.lower(), role)
+        await self.run({"ctx": ctx}, action, role)
 
     # ========================
-    # SLASH COMMAND
+    # SLASH
     # ========================
     @discord.app_commands.command(name="adminrole",
                                   description="Manage admin role (Owner only)")
     @discord.app_commands.describe(action="set | unset | list",
-                                   role="Role to set as admin")
+                                   role="Role to set")
     async def adminrole_slash(
         self,
         interaction: discord.Interaction,
@@ -84,14 +102,13 @@ class AdminRole(commands.Cog):
     ):
         r = Respond(interaction=interaction)
 
-        if interaction.guild is None:
+        if not interaction.guild:
             return await r.error("Error", "Guild not found")
 
-        if interaction.guild.owner_id != interaction.user.id:
-            return await r.error("Access Denied",
-                                 "Only server owner can use this command")
+        if not self.is_owner(interaction.user, interaction.guild):
+            return await r.error("Access Denied", "Owner only command")
 
-        await self.run({"interaction": interaction}, action.lower(), role)
+        await self.run({"interaction": interaction}, action, role)
 
 
 async def setup(bot):

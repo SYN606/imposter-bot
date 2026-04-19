@@ -1,6 +1,6 @@
 import logging
 import traceback
-from typing import Type, TypeVar, Generic
+from typing import Type, TypeVar, Generic, Any, Dict
 
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
@@ -17,8 +17,14 @@ T = TypeVar("T", bound=DeclarativeMeta)
 class BaseCRUD(Generic[T]):
     model: Type[T]
 
+    # ========================
+    # INTERNAL EXECUTOR
+    # ========================
     @classmethod
     async def _run(cls, fn):
+        if not hasattr(cls, "model") or cls.model is None:
+            raise RuntimeError(f"{cls.__name__} → model not defined")
+
         async with SessionLocal() as session:
             try:
                 return await fn(session)
@@ -41,6 +47,9 @@ class BaseCRUD(Generic[T]):
 
                 return None
 
+    # ========================
+    # READ
+    # ========================
     @classmethod
     async def get(cls, **filters):
         async def run(session):
@@ -61,6 +70,9 @@ class BaseCRUD(Generic[T]):
 
         return await cls._run(run)
 
+    # ========================
+    # CREATE
+    # ========================
     @classmethod
     async def create(cls, **data):
         async def run(session):
@@ -71,8 +83,11 @@ class BaseCRUD(Generic[T]):
 
         return await cls._run(run)
 
+    # ========================
+    # UPDATE
+    # ========================
     @classmethod
-    async def update(cls, filters, data):
+    async def update(cls, filters: Dict[str, Any], data: Dict[str, Any]):
         async def run(session):
             result = await session.execute(
                 select(cls.model).filter_by(**filters)
@@ -90,6 +105,9 @@ class BaseCRUD(Generic[T]):
 
         return await cls._run(run)
 
+    # ========================
+    # DELETE
+    # ========================
     @classmethod
     async def delete(cls, **filters):
         async def run(session):
@@ -104,5 +122,28 @@ class BaseCRUD(Generic[T]):
             await session.delete(obj)
             await session.commit()
             return True
+
+        return await cls._run(run)
+
+    # ========================
+    # UPSERT
+    # ========================
+    @classmethod
+    async def upsert(cls, filters: Dict[str, Any], data: Dict[str, Any]):
+        async def run(session):
+            result = await session.execute(
+                select(cls.model).filter_by(**filters)
+            )
+            obj = result.scalar_one_or_none()
+
+            if obj:
+                for k, v in data.items():
+                    setattr(obj, k, v)
+            else:
+                obj = cls.model(**filters, **data) # type: ignore
+                session.add(obj)
+
+            await session.commit()
+            return obj
 
         return await cls._run(run)

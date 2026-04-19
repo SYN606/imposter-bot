@@ -17,9 +17,10 @@ def _safe(text, limit):
     return text if len(text) <= limit else text[:limit - 1] + "…"
 
 
-def _separator():
-    # clean modern divider
-    return "─" * 30
+def _format_field(name, value, emoji=None):
+    if emoji:
+        return f"{emoji} {name}", value
+    return name, value
 
 
 def make_embed(
@@ -31,7 +32,8 @@ def make_embed(
     footer=None,
     show_timestamp=True,
     use_emoji=True,
-    separator=True,
+    highlight=False,      # highlight description (codeblock style)
+    compact=False,        # force inline layout
 ):
 
     level = level.upper()
@@ -40,36 +42,36 @@ def make_embed(
     color = config["color"]
     emoji = EMOJIS.get(config["emoji"]) if use_emoji else None
 
-    # title with emoji
+    # title
     title = f"{emoji} {title}" if emoji else title
 
-    # build description with separator
-    desc_parts = []
-
-    if separator:
-        desc_parts.append(_separator())
-
-    if description:
-        desc_parts.append(description)
-
-    final_description = "\n".join(desc_parts) if desc_parts else None
+    # description styling
+    if description and highlight:
+        description = f"```{description}```"
 
     embed = discord.Embed(
         title=_safe(title, 256),
-        description=_safe(final_description, 4096),
+        description=_safe(description, 4096),
         color=color,
     )
 
-    # fields
+    # fields (clean modern layout)
     if fields:
         for name, value, inline in fields[:25]:
+
+            field_emoji = None
+            if isinstance(name, tuple):
+                name, field_emoji = name
+
+            name, value = _format_field(name, value, field_emoji)
+
             embed.add_field(
                 name=_safe(name, 256),
                 value=_safe(value, 1024),
-                inline=inline,
+                inline=inline if not compact else True,
             )
 
-    # footer
+    # subtle footer
     if footer:
         embed.set_footer(text=_safe(footer, 2048))
 
