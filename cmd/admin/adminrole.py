@@ -11,61 +11,101 @@ class AdminRole(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
+    # ========================
     # HELPERS
+    # ========================
     def is_owner(self, user, guild):
         return guild and user.id == guild.owner_id
 
+    def get_guild(self, target):
+        ctx = target.get("ctx")
+        interaction = target.get("interaction")
+        return ctx.guild if ctx else interaction.guild  # type: ignore
+
+    # ========================
     # CORE
+    # ========================
     async def run(self,
                   target,
                   action: str,
                   role: Optional[discord.Role] = None):
         r = Respond(**target)
-
-        ctx = target.get("ctx")
-        interaction = target.get("interaction")
-
-        guild = ctx.guild if ctx else interaction.guild  # type: ignore
+        guild = self.get_guild(target)
 
         if not guild:
-            return await r.error("Error", "Guild not found")
+            return await self.fallback(target, "Guild not found")
 
-        action = action.lower()
+        action = action.lower().strip()
 
-        # SET
-        if action == "set":
-            if not role:
-                return await r.error("Missing Role", "Provide a role")
+        try:
+            # ========================
+            # SET
+            # ========================
+            if action == "set":
+                if not role:
+                    return await r.error("Missing Role", "Provide a role")
 
-            await GuildCRUD.set_admin_role(guild.id, role)
+                await GuildCRUD.set_admin_role(guild.id, role)
 
-            return await r.success("Admin Role Set", f"Role → {role.mention}")
+                return await r.success("Admin Role Set",
+                                       f"Role → {role.mention}")
 
-        # UNSET
-        elif action == "unset":
-            await GuildCRUD.unset_admin_role(guild.id) # type: ignore
+            # ========================
+            # UNSET
+            # ========================
+            elif action == "unset":
+                await GuildCRUD.unset_admin_role(guild.id)
 
-            return await r.success("Admin Role Removed",
-                                   "No admin role configured")
+                return await r.success("Admin Role Removed",
+                                       "No admin role configured")
 
-        # LIST
-        elif action == "list":
-            role_id = await GuildCRUD.get_admin_role_id(guild.id) # type: ignore
+            # ========================
+            # LIST
+            # ========================
+            elif action == "list":
+                role_id = await GuildCRUD.get_admin_role(guild.id)
 
-            role_obj = guild.get_role(int(role_id)) if role_id else None
+                if not role_id:
+                    return await r.info("Admin Role", "No admin role set")
 
-            if not role_obj:
-                return await r.info("Admin Role", "No admin role set")
+                try:
+                    role_obj = guild.get_role(int(role_id))
+                except Exception:
+                    role_obj = None
 
-            return await r.info("Admin Role", f"Current → {role_obj.mention}")
+                if not role_obj:
+                    return await r.warning("Admin Role",
+                                           "Configured role no longer exists")
 
-        # ========================
-        # INVALID
-        # ========================
-        return await r.error("Invalid Action", "Use: set | unset | list")
+                return await r.info("Admin Role",
+                                    f"Current → {role_obj.mention}")
+
+            # ========================
+            # INVALID
+            # ========================
+            return await r.error("Invalid Action", "Use: set | unset | list")
+
+        except Exception as e:
+            print(f"[ADMINROLE ERROR] {e}")
+            return await self.fallback(target, "Something went wrong")
 
     # ========================
-    # PREFIX
+    # FALLBACK (CRITICAL)
+    # ========================
+    async def fallback(self, target, msg):
+        if target.get("ctx"):
+            await target["ctx"].send(f"⚠️ {msg}")
+
+        elif target.get("interaction"):
+            interaction = target["interaction"]
+
+            if interaction.response.is_done():
+                await interaction.followup.send(f"⚠️ {msg}")
+            else:
+                await interaction.response.send_message(f"⚠️ {msg}")
+
+    # ========================
+    # PREFIX COMMAND
     # ========================
     @commands.command(name="adminrole")
     async def adminrole_prefix(
@@ -74,10 +114,10 @@ class AdminRole(commands.Cog):
         action: Optional[str] = None,
         role: Optional[discord.Role] = None,
     ):
-        r = Respond(ctx=ctx)
-
         if not ctx.guild:
             return
+
+        r = Respond(ctx=ctx)
 
         if not self.is_owner(ctx.author, ctx.guild):
             return await r.error("Access Denied", "Owner only command")
@@ -88,7 +128,7 @@ class AdminRole(commands.Cog):
         await self.run({"ctx": ctx}, action, role)
 
     # ========================
-    # SLASH
+    # SLASH COMMAND
     # ========================
     @discord.app_commands.command(name="adminrole",
                                   description="Manage admin role (Owner only)")
@@ -100,10 +140,15 @@ class AdminRole(commands.Cog):
         action: str,
         role: Optional[discord.Role] = None,
     ):
+        # SAFE DEFER
+        if not interaction.response.is_done():
+            await interaction.response.defer()
+
         r = Respond(interaction=interaction)
 
         if not interaction.guild:
-            return await r.error("Error", "Guild not found")
+            return await self.fallback({"interaction": interaction},
+                                       "Guild not found")
 
         if not self.is_owner(interaction.user, interaction.guild):
             return await r.error("Access Denied", "Owner only command")

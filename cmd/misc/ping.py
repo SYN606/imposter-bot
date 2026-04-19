@@ -9,20 +9,29 @@ from config.emojis import EMOJIS
 async def run(bot, target):
     r = Respond(**target)
 
-    # measure API latency (real response time)
     start = time.perf_counter()
 
-    if target.get("ctx"):
-        await target["ctx"].trigger_typing()
-    elif target.get("interaction"):
-        await target["interaction"].response.defer()
+    try:
+        # ========================
+        # SAFE TRIGGER
+        # ========================
+        if target.get("ctx"):
+            await target["ctx"].trigger_typing()
+
+        elif target.get("interaction"):
+            interaction = target["interaction"]
+
+            if not interaction.response.is_done():
+                await interaction.response.defer()
+
+    except Exception as e:
+        print(f"[PING TRIGGER ERROR] {e}")
 
     end = time.perf_counter()
 
     api_latency = round((end - start) * 1000)
     ws_latency = round(bot.latency * 1000)
 
-    # status
     avg = (api_latency + ws_latency) // 2
 
     if avg < 100:
@@ -32,18 +41,36 @@ async def run(bot, target):
     else:
         status = f"{EMOJIS.get('red_dot')} Slow"
 
-    await r.send(
-        title="Pong",
-        description=str(avg),
-        highlight=True,
-        level="SUCCESS",
-        fields=[
-            ("WebSocket", f"`{ws_latency} ms`", True),
-            ("API", f"`{api_latency} ms`", True),
-            ("Status", status, False),
-        ],
-        footer="Imposter • Network Diagnostics",
-    )
+    try:
+        await r.send(
+            title="Pong",
+            description=str(avg),
+            highlight=True,
+            level="SUCCESS",
+            fields=[
+                ("WebSocket", f"`{ws_latency} ms`", True),
+                ("API", f"`{api_latency} ms`", True),
+                ("Status", status, False),
+            ],
+            footer="Imposter • Network Diagnostics",
+        )
+
+    except Exception as e:
+        # ========================
+        # FAILSAFE (CRITICAL)
+        # ========================
+        print(f"[RESPOND FAIL] {e}")
+
+        if target.get("ctx"):
+            await target["ctx"].send(f"Pong: {avg} ms")
+
+        elif target.get("interaction"):
+            interaction = target["interaction"]
+
+            if interaction.response.is_done():
+                await interaction.followup.send(f"Pong: {avg} ms")
+            else:
+                await interaction.response.send_message(f"Pong: {avg} ms")
 
 
 class Ping(commands.Cog):
@@ -74,15 +101,19 @@ class Ping(commands.Cog):
     async def prefix_error(self, ctx, error):
         if isinstance(error, commands.CommandOnCooldown):
             r = Respond(ctx=ctx)
-            await r.warning("Cooldown",
-                            f"Try again in `{round(error.retry_after)}s`")
+            await r.warning(
+                "Cooldown",
+                f"Try again in `{round(error.retry_after)}s`"
+            )
 
     @ping_slash.error
     async def slash_error(self, interaction, error):
         if isinstance(error, discord.app_commands.CommandOnCooldown):
             r = Respond(interaction=interaction)
-            await r.warning("Cooldown",
-                            f"Try again in `{round(error.retry_after)}s`")
+            await r.warning(
+                "Cooldown",
+                f"Try again in `{round(error.retry_after)}s`"
+            )
 
 
 async def setup(bot):

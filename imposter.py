@@ -1,12 +1,8 @@
 import os
-import time
 import logging
 import traceback
-import threading
-import sys
 import discord
 from discord.ext import commands
-
 
 # ========================
 # SAFE SETTINGS LOAD
@@ -26,9 +22,8 @@ except Exception as e:
     print("\nFix your .env file and restart.\n")
     exit(1)
 
-from config.prefix import dynamic_prefix, normalize_prefix
+from config.prefix import dynamic_prefix, normalize
 from database.init import init_db
-
 
 # ========================
 # LOGGING
@@ -45,7 +40,7 @@ def log(msg):
     logger.info(msg)
 
 
-def error(msg):
+def log_error(msg):
     logger.error(msg)
 
 
@@ -58,36 +53,10 @@ intents.members = True
 
 
 # ========================
-# CONTROL FLAGS
-# ========================
-RELOAD_FLAG = False
-STOP_FLAG = False
-
-
-def keyboard_listener():
-    global RELOAD_FLAG, STOP_FLAG
-
-    while True:
-        try:
-            key = sys.stdin.read(1)
-
-            if key.lower() == "r":
-                print("\n[RELOAD REQUESTED]\n")
-                RELOAD_FLAG = True
-
-            elif key.lower() == "c":
-                print("\n[STOP REQUESTED]\n")
-                STOP_FLAG = True
-                break
-
-        except Exception:
-            break
-
-
-# ========================
 # BOT
 # ========================
 class ImposterBot(commands.Bot):
+
     def __init__(self):
         super().__init__(
             command_prefix=dynamic_prefix,
@@ -96,28 +65,31 @@ class ImposterBot(commands.Bot):
         )
 
     async def setup_hook(self):
+        # DB init
         try:
             await init_db()
             log("✓ Database initialized")
         except Exception as e:
-            error(f"DB init failed → {e}")
-
+            log_error(f"DB init failed → {e}")
             if is_dev():
                 traceback.print_exc()
 
+        # load commands
         await self.load_extensions()
 
+        # sync slash
         if SYNC_COMMANDS:
             try:
                 await self.tree.sync()
                 log("✓ Slash commands synced")
             except Exception as e:
-                error(f"Slash sync failed → {e}")
+                log_error(f"Slash sync failed → {e}")
 
     async def load_extensions(self):
         base = "cmd"
 
         if not os.path.isdir(base):
+            log("No cmd folder found")
             return
 
         for root, _, files in os.walk(base):
@@ -128,81 +100,79 @@ class ImposterBot(commands.Bot):
                 module = os.path.join(root, file).replace(os.sep, ".")[:-3]
 
                 try:
+                    log(f"Loading: {module}")
                     await self.load_extension(module)
-                    log(f"✓ {module}")
+                    log(f"✓ Loaded {module}")
                 except Exception as e:
-                    error(f"✗ {module} → {e}")
-
+                    log_error(f"✗ Failed {module} → {e}")
                     if is_dev():
                         traceback.print_exc()
 
     async def on_ready(self):
-        log(f"\nLogged in as {self.user} ({self.user.id})") # type: ignore
+        log(f"\nLogged in as {self.user} ({self.user.id})")  # type: ignore
         log("Imposter is ready\n")
+
+        print("=== COMMANDS LOADED ===")
+        for cmd in self.commands:
+            print(f"- {cmd.name}")
 
     async def on_message(self, message: discord.Message):
         if message.author.bot or message.guild is None:
             return
 
         try:
-            message.content = normalize_prefix(message.content)
-        except Exception as e:
-            error(f"Message error → {e}")
+            # 🔥 FORCE PREFIX NORMALIZATION
+            message.content = normalize(message.content)
 
+        except Exception as e:
+            log_error(f"[NORMALIZE ERROR] {e}")
             if is_dev():
                 traceback.print_exc()
 
         await self.process_commands(message)
+
+    # ========================
+    # GLOBAL ERROR HANDLER
+    # ========================
+    async def on_command_error(self, ctx, err):
+        log_error(f"[COMMAND ERROR] {err}")
+
+        try:
+            await ctx.send(f"⚠️ {str(err)}")
+        except Exception:
+            pass
 
 
 # ========================
 # ENTRYPOINT
 # ========================
 def main():
-    global RELOAD_FLAG, STOP_FLAG
+    bot = ImposterBot()
 
-    # start keyboard listener thread
-    threading.Thread(target=keyboard_listener, daemon=True).start()
+    try:
+        log("Starting bot...\n")
+        bot.run(TOKEN)  # type: ignore
 
-    while True:
-        RELOAD_FLAG = False
-        STOP_FLAG = False
+    except discord.errors.PrivilegedIntentsRequired:
+        print("\n[INTENTS ERROR]")
+        print("Enable in Developer Portal:")
+        print("- MESSAGE CONTENT INTENT")
+        print("- SERVER MEMBERS INTENT\n")
 
-        bot = ImposterBot()
+    except KeyboardInterrupt:
+        log("Shutting down gracefully...")
+        print("Shutting down gracefully...")
 
         try:
-            log("Starting bot...\n")
-            bot.run(TOKEN) # type: ignore
+            if bot.loop and not bot.loop.is_closed():
+                bot.loop.run_until_complete(bot.close())
+        except Exception:
+            pass
 
-        except discord.errors.PrivilegedIntentsRequired:
-            print("\n[INTENTS ERROR]")
-            print("Enable in Developer Portal:")
-            print("- MESSAGE CONTENT INTENT")
-            print("- SERVER MEMBERS INTENT\n")
-            break
-
-        except KeyboardInterrupt:
-            print("\nGraceful shutdown...\n")
-            break
-
-        except Exception as e:
-            error(f"Crash → {e}")
-
-            if is_dev():
-                traceback.print_exc()
-
-            time.sleep(5)
-
-        # ========================
-        # HANDLE FLAGS
-        # ========================
-        if STOP_FLAG:
-            log("Stopped.")
-            break
-
-        if RELOAD_FLAG:
-            log("Reloading bot...\n")
-            continue
+    except Exception as e:
+        log_error(f"Crash → {e}")
+        if is_dev():
+            traceback.print_exc()
 
 
 if __name__ == "__main__":

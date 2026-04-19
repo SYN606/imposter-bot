@@ -2,47 +2,36 @@ from discord.ext import commands
 import discord
 import os
 
-# env already loaded in main
 PREFIX = (os.getenv("PREFIX") or "sus").strip()
 
 if not PREFIX:
     PREFIX = "sus"
 
+PREFIX_LOWER = PREFIX.lower()
 
-# ========================
-# NORMALIZER
-# ========================
 
-def normalize_prefix(content: str):
-
+def normalize(content: str):
+    """
+    FORCE:
+    sus ping -> susping
+    SUS PING -> susping
+    sus    ping -> susping
+    """
     if not content:
         return content
 
     stripped = content.lstrip()
 
-    if not stripped.lower().startswith(PREFIX.lower()):
+    if not stripped.lower().startswith(PREFIX_LOWER):
         return content
 
     rest = stripped[len(PREFIX):].lstrip()
     return f"{PREFIX}{rest}"
 
 
-# ========================
-# PREFIX RESOLVER
-# ========================
-
 def dynamic_prefix(bot: commands.Bot, message: discord.Message):
-
-    base = PREFIX
-
-    if not message.content:
-        return commands.when_mentioned_or(base)(bot, message)
-
-    content = message.content.lstrip()
-
-    # case-insensitive match
-    if content.lower().startswith(base.lower()):
-        actual = content[:len(base)]  # preserve user casing
-        return commands.when_mentioned_or(actual)(bot, message)
-
-    return commands.when_mentioned_or(base)(bot, message)
+    """
+    Always use HARD prefix:
+    susping
+    """
+    return commands.when_mentioned_or(PREFIX)(bot, message)
