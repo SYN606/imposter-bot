@@ -6,38 +6,39 @@ import re
 
 from utils.respond import Respond
 from config.emojis import EMOJIS
-
+from utils.permissions import check 
 
 IP_REGEX = re.compile(r"^(?:\d{1,3}\.){3}\d{1,3}$")
 
 
 class IPInfo(commands.Cog):
 
-    def __init__(self, bot):
+    def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.session = None
+        self.session: aiohttp.ClientSession | None = None
 
     async def cog_load(self):
         timeout = aiohttp.ClientTimeout(total=10)
         self.session = aiohttp.ClientSession(
-            timeout=timeout,
-            headers={"User-Agent": "ImposterBot/1.0"}
-        )
+            timeout=timeout, headers={"User-Agent": "ImposterBot/1.0"})
 
     async def cog_unload(self):
         if self.session:
             await self.session.close()
 
-    # SAFE EMOJI
+    # SAFE EMOJI FETCH (kept for compatibility, no emojis forced)
     def e(self, key):
         return EMOJIS.get(key) or ""
 
-    # FETCH
-    async def fetch(self, ip):
+    # FETCH DATA
+    async def fetch(self, ip: str):
+        if not self.session:
+            return None
+
         url = f"https://ipinfo.io/{ip}/json"
 
         try:
-            async with self.session.get(url) as res: # type: ignore
+            async with self.session.get(url) as res:  # type: ignore
                 if res.status == 429:
                     return {"rate_limited": True}
 
@@ -53,32 +54,43 @@ class IPInfo(commands.Cog):
             print(f"[IPINFO FETCH ERROR] {e}")
             return None
 
-    # FALLBACK
-    async def fallback(self, target, msg):
+    # FALLBACK RESPONSE
+    async def fallback(self, target, msg: str):
         if target.get("ctx"):
-            await target["ctx"].send(f"⚠️ {msg}")
+            await target["ctx"].send(msg)
 
         elif target.get("interaction"):
             interaction = target["interaction"]
 
             if interaction.response.is_done():
-                await interaction.followup.send(f"⚠️ {msg}")
+                await interaction.followup.send(msg)
             else:
-                await interaction.response.send_message(f"⚠️ {msg}")
+                await interaction.response.send_message(msg)
 
-    # CORE
-    async def run(self, target, ip):
+    # CORE LOGIC
+    async def run(self, target, ip: str):
         r = Respond(**target)
 
         # SAFE DEFER
         if target.get("interaction"):
-            interaction = target["interaction"]
+            interaction: discord.Interaction = target["interaction"]
             if not interaction.response.is_done():
                 await interaction.response.defer()
 
+        # PERMISSION CHECK
+        allowed = await check(
+            ctx=target.get("ctx"),
+            interaction=target.get("interaction"),
+            perms=None  # set to ["manage_guild"] or similar if needed
+        )
+
+        if not allowed:
+            return
+
         # VALIDATION
         if not IP_REGEX.match(ip):
-            return await r.error("Invalid Input", "Provide a valid IPv4 address")
+            return await r.error("Invalid Input",
+                                 "Provide a valid IPv4 address")
 
         data = await self.fetch(ip)
 
@@ -111,25 +123,26 @@ class IPInfo(commands.Cog):
                 highlight=True,
                 level="INFO",
                 fields=[
-                    (("Location", self.e("arrow_point")),
-                     f"{city}, {region}, {country}", False),
-                    (("ISP / Org", self.e("developer")), org, False),
-                    (("Coordinates", self.e("ping")), loc, True),
-                    (("Timezone", self.e("message")), timezone, True),
-                    (("Map", self.e("curved_arrow")),
+                    (("Location", ""), f"{city}, {region}, {country}", False),
+                    (("ISP / Org", ""), org, False),
+                    (("Coordinates", ""), loc, True),
+                    (("Timezone", ""), timezone, True),
+                    (("Map", ""),
                      f"[Open Map]({map_link})" if map_link else "N/A", False),
                 ],
-                footer="Imposter • OSINT",
+                footer="Imposter OSINT",
             )
 
         except Exception as e:
             print(f"[IPINFO ERROR] {e}")
             await self.fallback(target, "Something went wrong")
 
-    # PREFIX
+    # PREFIX COMMAND
     @commands.command(name="ipinfo")
     @commands.cooldown(2, 30, commands.BucketType.user)
-    async def ipinfo_prefix(self, ctx, ip: str = None): # type: ignore
+    async def ipinfo_prefix(self,
+                            ctx: commands.Context,
+                            ip: str = None):  # type: ignore
         r = Respond(ctx=ctx)
 
         if not ip:
@@ -137,30 +150,29 @@ class IPInfo(commands.Cog):
 
         await self.run({"ctx": ctx}, ip)
 
-    # SLASH
+    # SLASH COMMAND
     @discord.app_commands.command(
-        name="ipinfo",
-        description="Get information about an IP address"
-    )
+        name="ipinfo", description="Get information about an IP address")
     @discord.app_commands.checks.cooldown(2, 30.0)
     async def ipinfo_slash(self, interaction: discord.Interaction, ip: str):
         await self.run({"interaction": interaction}, ip)
 
-    # ERRORS
+    # ERROR HANDLING
     @ipinfo_prefix.error
-    async def prefix_error(self, ctx, error):
+    async def prefix_error(self, ctx: commands.Context, error: Exception):
         if isinstance(error, commands.CommandOnCooldown):
             r = Respond(ctx=ctx)
             await r.warning("Cooldown",
-                            f"Try again in `{round(error.retry_after)}s`")
+                            f"Try again in {round(error.retry_after)}s")
 
     @ipinfo_slash.error
-    async def slash_error(self, interaction, error):
+    async def slash_error(self, interaction: discord.Interaction,
+                          error: Exception):
         if isinstance(error, discord.app_commands.CommandOnCooldown):
             r = Respond(interaction=interaction)
             await r.warning("Cooldown",
-                            f"Try again in `{round(error.retry_after)}s`")
+                            f"Try again in {round(error.retry_after)}s")
 
 
-async def setup(bot):
+async def setup(bot: commands.Bot):
     await bot.add_cog(IPInfo(bot))
