@@ -6,7 +6,7 @@ import re
 
 from utils.respond import Respond
 from config.emojis import EMOJIS
-from utils.permissions import check 
+from utils.permissions import check
 
 IP_REGEX = re.compile(r"^(?:\d{1,3}\.){3}\d{1,3}$")
 
@@ -17,6 +17,13 @@ class IPInfo(commands.Cog):
         self.bot = bot
         self.session: aiohttp.ClientSession | None = None
 
+        # GLOBAL COOLDOWN (for slash/manual use)
+        self.global_cooldown = commands.CooldownMapping.from_cooldown(
+            5, 60, commands.BucketType.default)
+
+        # Prevent concurrent spam
+        self.lock = asyncio.Lock()
+
     async def cog_load(self):
         timeout = aiohttp.ClientTimeout(total=10)
         self.session = aiohttp.ClientSession(
@@ -26,7 +33,7 @@ class IPInfo(commands.Cog):
         if self.session:
             await self.session.close()
 
-    # SAFE EMOJI FETCH (kept for compatibility, no emojis forced)
+    # SAFE EMOJI FETCH
     def e(self, key):
         return EMOJIS.get(key) or ""
 
@@ -39,8 +46,13 @@ class IPInfo(commands.Cog):
 
         try:
             async with self.session.get(url) as res:  # type: ignore
+
                 if res.status == 429:
-                    return {"rate_limited": True}
+                    retry = res.headers.get("Retry-After")
+                    return {
+                        "rate_limited": True,
+                        "retry_after": int(retry) if retry else 30
+                    }
 
                 if res.status != 200:
                     return None
@@ -78,11 +90,9 @@ class IPInfo(commands.Cog):
                 await interaction.response.defer()
 
         # PERMISSION CHECK
-        allowed = await check(
-            ctx=target.get("ctx"),
-            interaction=target.get("interaction"),
-            perms=None  # set to ["manage_guild"] or similar if needed
-        )
+        allowed = await check(ctx=target.get("ctx"),
+                              interaction=target.get("interaction"),
+                              perms=None)
 
         if not allowed:
             return
@@ -92,7 +102,9 @@ class IPInfo(commands.Cog):
             return await r.error("Invalid Input",
                                  "Provide a valid IPv4 address")
 
-        data = await self.fetch(ip)
+        # Prevent spam / race conditions
+        async with self.lock:
+            data = await self.fetch(ip)
 
         if not data:
             return await self.fallback(target, "Failed to fetch data")
@@ -101,7 +113,10 @@ class IPInfo(commands.Cog):
             return await r.warning("Timeout", "API took too long")
 
         if data.get("rate_limited"):
-            return await r.warning("Rate Limited", "Try again later")
+            retry = data.get("retry_after", 30)
+            return await r.warning(
+                "API Rate Limited",
+                f"Service is throttling requests. Retry in {retry}s")
 
         if data.get("bogon"):
             return await r.error("Invalid IP", "Private or reserved IP")
@@ -115,7 +130,8 @@ class IPInfo(commands.Cog):
             loc = data.get("loc", "N/A")
             timezone = data.get("timezone", "N/A")
 
-            map_link = f"https://www.google.com/maps?q={loc}" if loc != "N/A" else None
+            map_link = (f"https://www.google.com/maps?q={loc}"
+                        if loc != "N/A" else None)
 
             await r.send(
                 title="IP Intelligence",
@@ -140,9 +156,8 @@ class IPInfo(commands.Cog):
     # PREFIX COMMAND
     @commands.command(name="ipinfo")
     @commands.cooldown(2, 30, commands.BucketType.user)
-    async def ipinfo_prefix(self,
-                            ctx: commands.Context,
-                            ip: str = None):  # type: ignore
+    @commands.cooldown(5, 60, commands.BucketType.default)  # GLOBAL
+    async def ipinfo_prefix(self, ctx: commands.Context, ip: str = None): # type: ignore
         r = Respond(ctx=ctx)
 
         if not ip:
@@ -155,6 +170,16 @@ class IPInfo(commands.Cog):
         name="ipinfo", description="Get information about an IP address")
     @discord.app_commands.checks.cooldown(2, 30.0)
     async def ipinfo_slash(self, interaction: discord.Interaction, ip: str):
+        # GLOBAL COOLDOWN CHECK
+        bucket = self.global_cooldown.get_bucket(interaction)
+        retry_after = bucket.update_rate_limit() # type: ignore
+
+        if retry_after:
+            r = Respond(interaction=interaction)
+            return await r.warning(
+                "Global Cooldown",
+                f"Bot is busy. Try again in {round(retry_after)}s")
+
         await self.run({"interaction": interaction}, ip)
 
     # ERROR HANDLING
@@ -162,16 +187,16 @@ class IPInfo(commands.Cog):
     async def prefix_error(self, ctx: commands.Context, error: Exception):
         if isinstance(error, commands.CommandOnCooldown):
             r = Respond(ctx=ctx)
-            await r.warning("Cooldown",
-                            f"Try again in {round(error.retry_after)}s")
+            msg = f"You're going too fast. Try again in {round(error.retry_after)}s"
+            await r.warning("Slow down", msg)
 
     @ipinfo_slash.error
     async def slash_error(self, interaction: discord.Interaction,
                           error: Exception):
         if isinstance(error, discord.app_commands.CommandOnCooldown):
             r = Respond(interaction=interaction)
-            await r.warning("Cooldown",
-                            f"Try again in {round(error.retry_after)}s")
+            msg = f"You're going too fast. Try again in {round(error.retry_after)}s"
+            await r.warning("Slow down", msg)
 
 
 async def setup(bot: commands.Bot):
