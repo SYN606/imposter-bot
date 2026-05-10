@@ -1,13 +1,15 @@
 [project]
 name = "imposter"
 version = "0.1.0"
-description = "Add your description here"
+description = "Discord OSINT bot"
 readme = "README.md"
-requires-python = ">=3.14"
+
+requires-python = ">=3.11,<3.13"
+
 dependencies = [
-    "aiohttp>=3.13.3",
+    "discord>=2.3.2,<3.0.0",
+    "aiohttp>=3.9,<3.13",
     "aiosqlite>=0.22.1",
-    "discord>=2.3.2",
     "pyshorteners>=1.0.1",
     "python-dotenv>=1.2.2",
     "sqlalchemy>=2.0.48",
